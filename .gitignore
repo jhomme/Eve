@@ -4,3 +4,5 @@ _voicelab_in_progress
 __pycache__/
 *.pyc
 bookmark.md
+bookmarks.md
+diff.md

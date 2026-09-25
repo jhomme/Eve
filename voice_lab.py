@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
 Voice Lab -- eSpeak NG variant editor for NVDA
-Numbered menus with presets. Synthesizes and plays after every change.
+wxPython GUI with accessible native controls.
 """
+import ctypes
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
+
+import wx
 
 ESPEAK_EXE = Path(r"C:\Program Files\eSpeak NG\espeak-ng.exe")
 DATA_DIR = Path(__file__).parent / "espeak-ng-data"
@@ -249,6 +253,9 @@ class Variant:
         else:
             self.lines.append(full_line)
 
+    def reload(self):
+        self.lines = self.path.read_text(encoding="utf-8").splitlines()
+
     def save(self):
         self.path.write_text("\n".join(self.lines) + "\n", encoding="utf-8")
 
@@ -296,110 +303,280 @@ def read_nvda_config():
     return synth, voice, variant
 
 
-def synthesize_and_play(variant: Variant, voice: str):
+def synthesize_and_play(variant: Variant, voice: str, phrase: str = TEST_PHRASE):
     variant.save()
     voice_arg = f"{voice}+{VARIANT_NAME}" if voice else VARIANT_NAME
     cmd = [
         str(ESPEAK_EXE),
         f"--path={DATA_DIR}",
         "-v", voice_arg,
-        "-w", str(OUTPUT_WAV),
-        TEST_PHRASE,
+        phrase,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"Synthesis error: {result.stderr.strip()}")
-    else:
-        os.startfile(str(OUTPUT_WAV))
+        return f"Synthesis error: {result.stderr.strip()}"
+    return None
 
 
-APP_DESCRIPTION = """\
-Voice Lab creates a custom eSpeak NG voice variant for NVDA.
+class _SaveVoiceDialog(wx.Dialog):
+    def __init__(self, parent, default_name=""):
+        super().__init__(parent, title="Save As New Voice")
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
 
-It reads your current eSpeak voice from NVDA's settings, copies it as a
-starting point, and lets you adjust parameters like pitch, formants, flutter,
-and consonant sharpness through a numbered menu. After each change it
-synthesizes a test phrase to a WAV file and plays it so you can hear the
-result immediately. When you are satisfied, it installs the finished variant
-into NVDA's voice data folder so it appears in the Voice Settings dialog.
+        lbl = wx.StaticText(panel, label="Voice name:")
+        self.name_ctrl = wx.TextCtrl(panel, value=default_name)
+        sizer.Add(lbl, 0, wx.ALL, 5)
+        sizer.Add(self.name_ctrl, 0, wx.EXPAND | wx.ALL, 5)
 
-To use this app, open NVDA's Voice Settings and switch the synthesizer to
-eSpeak NG, then run Voice Lab again.
-"""
+        btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
 
+        panel.SetSizer(sizer)
+        sizer.Fit(self)
+        self.name_ctrl.SetFocus()
 
-def show_main_menu(variant: Variant):
-    print("\n--- Parameters ---")
-    for i, key in enumerate(MAIN_MENU_ORDER, 1):
-        label = PARAMETERS[key]["label"]
-        desc = PARAMETERS[key]["desc"]
-        lookup_keys = PARAMETERS[key]["keys"]
-        current = " / ".join(variant.get_raw(k) for k in lookup_keys)
-        print(f"  {i:2}. {label:<12}  {desc:<48}  (current: {current})")
-    print()
-    print("   R. Re-play last WAV")
-    print("   S. Show current file")
-    print("   I. Install to NVDA and exit")
-    print("   Q. Quit")
-    print("   ?. Help")
-    print()
+    def get_name(self):
+        return self.name_ctrl.GetValue().strip()
 
 
-def show_submenu(param_key: str, variant: Variant):
-    label = PARAMETERS[param_key]["label"]
-    options = SUBMENUS[param_key]
-    lookup_keys = PARAMETERS[param_key]["keys"]
-    current = " / ".join(variant.get_raw(k) for k in lookup_keys)
+class _InstallDialog(wx.Dialog):
+    def __init__(self, parent, default_display="", default_file=""):
+        super().__init__(parent, title="Install to NVDA")
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
 
-    print(f"\n--- {label} (current: {current}) ---")
-    for i, (value, desc) in enumerate(options, 1):
-        marker = " <--" if value == current else ""
-        suffix = f"  -- {desc}" if desc else ""
-        print(f"  {i}. {value}{suffix}{marker}")
-    print()
-    print("  B. Back without changing")
-    print("  ?. What does this parameter do?")
-    print()
+        lbl1 = wx.StaticText(panel, label="Display name (shown in NVDA Voice Settings):")
+        self.display_ctrl = wx.TextCtrl(panel, value=default_display or VARIANT_NAME)
+        lbl2 = wx.StaticText(panel, label="File name (one word, no spaces):")
+        self.file_ctrl = wx.TextCtrl(panel, value=default_file or VARIANT_NAME)
+
+        for w in (lbl1, self.display_ctrl, lbl2, self.file_ctrl):
+            sizer.Add(w, 0, wx.EXPAND | wx.ALL, 5)
+
+        btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
+
+        panel.SetSizer(sizer)
+        sizer.Fit(self)
+        self.display_ctrl.SetFocus()
+
+    def get_values(self):
+        return self.display_ctrl.GetValue().strip(), self.file_ctrl.GetValue().strip()
 
 
-def run_submenu(param_key: str, variant: Variant):
-    options = SUBMENUS[param_key]
-    show_submenu(param_key, variant)
+class VoiceLabFrame(wx.Frame):
+    def __init__(self, variant: "Variant", voice: str, defer_init: bool = False):
+        super().__init__(None, title="Voice Lab — eSpeak NG Variant Editor")
+        self._variant = variant
+        self._voice = voice
+        self._saved_display = ""
+        self._saved_file = ""
+        self._synth_timer = None
+        self._synth_lock = threading.Lock()
+        self._cancel_event = threading.Event()
 
-    while True:
-        choice = input("Choice: ").strip().upper()
-        if choice == "B":
-            return
-        if choice == "?":
-            print(f"\n{PARAMETERS[param_key]['help']}\n")
-            continue
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(options):
-                full_line, _ = options[idx]
-                key = get_leading_key(full_line)
-                variant.set_line(key, full_line)
-                print(f"Set: {full_line}")
-                synthesize_and_play(variant, _current_voice)
+        self.CreateStatusBar()
+        self.SetStatusText("Ready.")
+        self._build_ui()
+        self.Show()
+        self._phrase_ctrl.SetFocus()
+        if not defer_init:
+            self._preselect_all()
+            self._fire_synthesis()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self):
+        outer = wx.BoxSizer(wx.VERTICAL)
+        panel = wx.Panel(self)
+
+        # Text-to-speak area
+        phrase_label = wx.StaticText(panel, label="Text to speak:")
+        self._phrase_ctrl = wx.TextCtrl(
+            panel, value=TEST_PHRASE,
+            style=wx.TE_MULTILINE | wx.TE_PROCESS_ENTER,
+        )
+        self._phrase_ctrl.SetMinSize((-1, 60))
+        speak_btn = wx.Button(panel, label="&Speak")
+        speak_btn.Bind(wx.EVT_BUTTON, self._on_speak)
+
+        outer.Add(phrase_label, 0, wx.ALL, 6)
+        outer.Add(self._phrase_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+        outer.Add(speak_btn, 0, wx.ALL, 6)
+
+        # Parameter list boxes
+        self._listboxes: dict[str, wx.ListBox] = {}
+        self._last_selection: dict[str, int] = {}
+        for key in MAIN_MENU_ORDER:
+            param = PARAMETERS[key]
+            box_label = f"{param['label']} — {param['desc']}"
+            lbl = wx.StaticText(panel, label=box_label)
+            lbl.SetWindowStyleFlag(wx.ST_NO_AUTORESIZE)
+            outer.Add(lbl, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
+
+            items = [desc if desc else full_line for full_line, desc in SUBMENUS[key]]
+            lb = wx.ListBox(panel, choices=items, style=wx.LB_SINGLE)
+            lb.Bind(wx.EVT_LISTBOX, self._make_listbox_handler(key))
+            self._listboxes[key] = lb
+            outer.Add(lb, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        # Action buttons
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        save_btn = wx.Button(panel, label="Save As &New Voice")
+        install_btn = wx.Button(panel, label="&Install to NVDA")
+        quit_btn = wx.Button(panel, label="&Quit")
+        save_btn.Bind(wx.EVT_BUTTON, self._on_save)
+        install_btn.Bind(wx.EVT_BUTTON, self._on_install)
+        quit_btn.Bind(wx.EVT_BUTTON, self._on_quit)
+        for b in (save_btn, install_btn, quit_btn):
+            btn_sizer.Add(b, 0, wx.ALL, 6)
+        outer.Add(btn_sizer, 0, wx.ALL, 4)
+
+        panel.SetSizer(outer)
+        outer.Fit(panel)
+        self.SetClientSize(panel.GetBestSize())
+        self.Bind(wx.EVT_CLOSE, self._on_close)
+
+    # ------------------------------------------------------------------
+    # Startup: pre-select current settings in each listbox
+    # ------------------------------------------------------------------
+
+    def _preselect_all(self):
+        for key in MAIN_MENU_ORDER:
+            lb = self._listboxes[key]
+            lookup_keys = PARAMETERS[key]["keys"]
+            current_raw = " / ".join(self._variant.get_raw(k) for k in lookup_keys)
+            for idx, (full_line, _) in enumerate(SUBMENUS[key]):
+                if full_line == current_raw:
+                    lb.SetSelection(idx)
+                    self._last_selection[key] = idx
+                    break
+
+    # ------------------------------------------------------------------
+    # Synthesis helpers
+    # ------------------------------------------------------------------
+
+    def _make_listbox_handler(self, param_key: str):
+        def handler(evt):
+            idx = evt.GetSelection()
+            if idx == wx.NOT_FOUND or idx == self._last_selection.get(param_key):
                 return
-            else:
-                print(f"Enter a number between 1 and {len(options)}, or B to go back.")
-        except ValueError:
-            print("Enter a number or B.")
+            self._last_selection[param_key] = idx
+            full_line, _ = SUBMENUS[param_key][idx]
+            key = get_leading_key(full_line)
+            self._variant.set_line(key, full_line)
+            self._schedule_synthesis()
+        return handler
 
+    def _schedule_synthesis(self):
+        if self._synth_timer is not None:
+            self._synth_timer.Stop()
+        self._cancel_event.set()
+        self._synth_timer = wx.CallLater(300, self._fire_synthesis)
 
-def install_to_nvda(variant: Variant):
-    display = input(f"Display name in NVDA Voice list [{VARIANT_NAME}]: ").strip() or VARIANT_NAME
-    file_name = input(f"File name (one word) [{VARIANT_NAME}]: ").strip() or VARIANT_NAME
-    variant.set_line("name", f"name {display}")
-    variant.save()
-    dest = NVDA_VARIANTS / file_name
-    try:
-        shutil.copy2(variant.path, dest)
-        print(f"\nInstalled as '{file_name}'.")
-        print(f"Restart NVDA, then open Voice Settings and select '{display}' from the Voice list.")
-    except PermissionError:
-        print("\nPermission denied. Re-run as Administrator to install to NVDA.")
+    def _fire_synthesis(self):
+        self._cancel_event.clear()
+        phrase = self._phrase_ctrl.GetValue() or TEST_PHRASE
+        cancel = self._cancel_event
+        variant = self._variant
+        voice = self._voice
+
+        def run():
+            err = synthesize_and_play(variant, voice, phrase)
+            if not cancel.is_set():
+                wx.CallAfter(self._on_synthesis_done, err)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_synthesis_done(self, err):
+        if err:
+            self.SetStatusText(err)
+
+    def _on_speak(self, evt):
+        self._fire_synthesis()
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+
+    def _on_save(self, evt):
+        dlg = _SaveVoiceDialog(self, default_name=self._saved_file)
+        if dlg.ShowModal() != wx.ID_OK:
+            dlg.Destroy()
+            return
+        name = dlg.get_name()
+        dlg.Destroy()
+        if not name:
+            return
+        dest = VARIANTS_DIR / name
+        self._variant.set_line("name", f"name {name}")
+        self._variant.save()
+        try:
+            shutil.copy2(self._variant.path, dest)
+            self._saved_file = name
+            self.SetStatusText(f"Saved as '{name}'.")
+        except Exception as e:
+            wx.MessageDialog(self, str(e), "Save failed", wx.OK | wx.ICON_ERROR).ShowModal()
+
+    def _on_install(self, evt):
+        dlg = _InstallDialog(self, default_display=self._saved_display, default_file=self._saved_file)
+        if dlg.ShowModal() != wx.ID_OK:
+            dlg.Destroy()
+            return
+        display, file_name = dlg.get_values()
+        dlg.Destroy()
+        if not display or not file_name:
+            return
+        self._saved_display = display
+        self._saved_file = file_name
+        self._variant.set_line("name", f"name {display}")
+        self._variant.save()
+        dest = NVDA_VARIANTS / file_name
+        if ctypes.windll.shell32.IsUserAnAdmin():
+            try:
+                shutil.copy2(self._variant.path, dest)
+                self.SetStatusText(f"Installed as '{file_name}'. Restart NVDA to see it.")
+            except Exception as e:
+                wx.MessageDialog(self, str(e), "Install failed", wx.OK | wx.ICON_ERROR).ShowModal()
+        else:
+            # Re-launch only the copy step elevated via UAC
+            import tempfile, sys
+            script = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8"
+            )
+            script.write(
+                f"import shutil\n"
+                f"shutil.copy2({str(self._variant.path)!r}, {str(dest)!r})\n"
+            )
+            script.close()
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", sys.executable, f'"{script.name}"', None, 1
+            )
+            self.SetStatusText(f"Install requested. Restart NVDA to see '{display}'.")
+
+    def _on_quit(self, evt):
+        self.Close()
+
+    def _on_close(self, evt):
+        variant_path = self._variant.path
+        if variant_path.exists():
+            dlg = wx.MessageDialog(
+                self,
+                "Save progress so you can continue later?",
+                "Quit Voice Lab",
+                wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION,
+            )
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            if result == wx.ID_CANCEL:
+                return  # don't close
+            if result == wx.ID_YES:
+                shutil.copy2(variant_path, IN_PROGRESS_FILE)
+            variant_path.unlink(missing_ok=True)
+        evt.Skip()  # allow the close
 
 
 def main():
@@ -408,88 +585,53 @@ def main():
     synth, voice, source_variant = read_nvda_config()
 
     if synth != "espeak":
-        print("\nNVDA is not currently using the eSpeak NG synthesizer.\n")
-        print(APP_DESCRIPTION)
+        app = wx.App()
+        wx.MessageDialog(
+            None,
+            "NVDA is not currently using the eSpeak NG synthesizer.\n\n"
+            "Open NVDA's Voice Settings, switch the synthesizer to eSpeak NG, "
+            "then run Voice Lab again.",
+            "Voice Lab",
+            wx.OK | wx.ICON_INFORMATION,
+        ).ShowModal()
         return
 
-    print("Voice Lab: eSpeak NG Variant Editor for NVDA")
     _current_voice = voice
-
     variant_path = VARIANTS_DIR / VARIANT_NAME
 
-    # Decide what to start from
-    if IN_PROGRESS_FILE.exists():
-        print("\nAn in-progress session was found.")
-        print("  1. Continue where you left off")
-        print("  2. Start fresh from the current NVDA voice")
-        while True:
-            pick = input("Choice: ").strip()
-            if pick == "1":
-                shutil.copy2(IN_PROGRESS_FILE, variant_path)
-                print("Loaded in-progress session.")
-                break
-            elif pick == "2":
-                IN_PROGRESS_FILE.unlink()
-                _seed_from_nvda(variant_path, voice, source_variant)
-                break
-            else:
-                print("Enter 1 or 2.")
+    app = wx.App()
+
+    has_session = IN_PROGRESS_FILE.exists()
+    if has_session:
+        shutil.copy2(IN_PROGRESS_FILE, variant_path)
     else:
-        print(f"\nNVDA voice: {voice}  variant: {source_variant or '(none)'}")
         _seed_from_nvda(variant_path, voice, source_variant)
 
-    try:
-        variant = Variant(variant_path)
+    variant = Variant(variant_path)
+    frame = VoiceLabFrame(variant, voice, defer_init=has_session)
 
-        print("\nSynthesizing current variant...")
-        synthesize_and_play(variant, voice)
-
-        while True:
-            show_main_menu(variant)
-            choice = input("Choice: ").strip().upper()
-
-            if choice == "Q":
-                print("\nSave progress to continue later?")
-                print("  1. Yes, save progress")
-                print("  2. No, discard and exit")
-                while True:
-                    pick = input("Choice: ").strip()
-                    if pick == "1":
-                        shutil.copy2(variant_path, IN_PROGRESS_FILE)
-                        print("Progress saved. Run Voice Lab again to continue.")
-                        break
-                    elif pick == "2":
-                        print("Discarding session.")
-                        break
-                    else:
-                        print("Enter 1 or 2.")
-                break
-            elif choice == "I":
-                install_to_nvda(variant)
-                if IN_PROGRESS_FILE.exists():
-                    IN_PROGRESS_FILE.unlink()
-                break
-            elif choice == "?":
-                print(APP_DESCRIPTION)
-            elif choice == "S":
-                variant.show()
-            elif choice == "R":
-                if OUTPUT_WAV.exists():
-                    os.startfile(str(OUTPUT_WAV))
-                else:
-                    print("No WAV yet.")
+    if has_session:
+        def _ask_resume():
+            dlg = wx.MessageDialog(
+                frame,
+                "An in-progress session was found. Continue where you left off?",
+                "Voice Lab",
+                wx.YES_NO | wx.ICON_QUESTION,
+            )
+            if dlg.ShowModal() == wx.ID_YES:
+                variant.reload()
+                frame._preselect_all()
             else:
-                try:
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(MAIN_MENU_ORDER):
-                        run_submenu(MAIN_MENU_ORDER[idx], variant)
-                    else:
-                        print(f"Enter a number between 1 and {len(MAIN_MENU_ORDER)}, or a letter option.")
-                except ValueError:
-                    print("Unknown choice.")
-    finally:
-        if variant_path.exists():
-            variant_path.unlink()
+                IN_PROGRESS_FILE.unlink()
+                _seed_from_nvda(variant_path, voice, source_variant)
+                variant.reload()
+                frame._preselect_all()
+            dlg.Destroy()
+            frame._fire_synthesis()
+
+        wx.CallAfter(_ask_resume)
+
+    app.MainLoop()
 
 
 def _seed_from_nvda(variant_path: Path, voice: str, source_variant: str | None):

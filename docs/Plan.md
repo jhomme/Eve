@@ -1,6 +1,6 @@
-﻿# Voice Lab
+# Voice Lab
 
-A CLI tool for editing eSpeak NG voice variant files and previewing them through NVDA in real time.
+A wxPython GUI for editing eSpeak NG voice variant files and previewing them through NVDA in real time.
 
 ---
 
@@ -9,39 +9,56 @@ A CLI tool for editing eSpeak NG voice variant files and previewing them through
 - eSpeak NG installed at `C:\Program Files\eSpeak NG\espeak-ng.exe`
 - NVDA installed at `C:\Program Files\NVDA\` and currently running
 - NVDA must be configured to use the eSpeak NG synthesizer (set in NVDA's Voice Settings)
+- Python with wxPython installed in the project's .venv
 
 ---
 
 ## How to Run
 
 ```
-python voice_lab.py
+.venv\Scripts\python voice_lab.py
 ```
 
-On startup Voice Lab reads your current eSpeak voice from `%APPDATA%\nvda\nvda.ini`. If NVDA is not using eSpeak NG, it prints instructions and exits.
+On startup Voice Lab reads your current eSpeak voice from `%APPDATA%\nvda\nvda.ini`. If NVDA is not using eSpeak NG, a dialog box appears with instructions and the app exits.
+
+If a saved session is found, a dialog asks whether to continue from where you left off or start fresh from your current NVDA voice.
 
 ---
 
 ## Workflow
 
-1. Start or resume a session. If a previous session was saved, you can continue from where you left off or start fresh from your current NVDA voice.
-2. Pick a parameter from the numbered main menu.
-3. Choose a preset value from the submenu. Voice Lab writes the change to the working variant file, synthesizes a WAV using eSpeak NG, and plays it immediately.
-4. Repeat until the voice sounds right.
-5. Install the finished variant into NVDA's voice data folder, then restart NVDA and select it from Voice Settings.
+1. The app opens showing all parameters at once in a single scrollable window.
+2. Move between controls with Tab and Shift+Tab. Use arrow keys inside a list box to select a preset value.
+3. Each time you select a preset, Voice Lab updates the working variant file and synthesizes audio immediately.
+4. Edit the text in the "Text to speak" field to test specific words or phrases, then press the Speak button or Enter.
+5. When the voice sounds right, use Save As New Voice to keep a named copy, or Install to NVDA to put it in NVDA's voice data folder.
+6. When you close the window, a dialog asks whether to save progress so you can resume later.
 
 Changes are non-destructive: the tool works on a temporary copy (`_voicelab_temp`) and never modifies your original NVDA voice files.
 
 ---
 
-## Main Menu Options
+## Controls
 
-- 1–10 — Open the submenu for that parameter
-- R — Re-play the last synthesized WAV
-- S — Print the current variant file contents
-- I — Install the variant to NVDA and exit
-- Q — Quit (optionally saving progress to resume later)
-- ? — Show general help
+### Text to speak
+A multiline text field pre-filled with a test phrase. Edit it to try specific words. Press Enter or Tab to the Speak button and activate it.
+
+### Parameter list boxes (one per parameter)
+Ten list boxes, one for each tunable parameter. Arrow up and down to move through preset values. Selecting a value triggers synthesis immediately.
+
+### Speak button
+Re-synthesizes and plays the current phrase with the current settings.
+
+### Save As New Voice button
+Saves the working variant as a named file inside the local espeak-ng-data folder. Prompts for a voice name.
+
+### Install to NVDA button
+Copies the variant into NVDA's voice data folder. Prompts for a display name (shown in NVDA's Voice list) and a file name (one word, no spaces). If the app is not running as Administrator, it triggers a UAC prompt for that copy step only.
+
+After installing, restart NVDA and open Preferences > Speech to select the new variant from the Voice dropdown.
+
+### Quit button
+Closes the window. Equivalent to pressing Alt+F4.
 
 ---
 
@@ -104,7 +121,7 @@ Sets the low and high pitch boundaries eSpeak uses when inflecting speech. A nar
 - pitch 75 95 — Very narrow — almost monotone
 - pitch 70 100 — Narrow
 - pitch 65 108 — Moderate
-- pitch 60 115 — Current setting
+- pitch 60 115 — Wide setting
 - pitch 55 125 — Wide
 - pitch 50 135 — Very wide — very expressive
 
@@ -133,17 +150,13 @@ Formants are the resonant frequencies of the vocal tract. Each is set with three
 
 - `espeak-ng-data/voices/!v/_voicelab_temp` — Working copy of the variant (deleted on exit)
 - `_voicelab_in_progress` — Saved session state for resuming later
-- `test.wav` — Last synthesized preview audio
 
 ---
 
-## Installing a Finished Variant
+## Work remaining
 
-Choose I from the main menu. You will be prompted for:
-
-- Display name — how it appears in NVDA's Voice list
-- File name — the filename saved to NVDA's voice data folder (one word, no spaces)
-
-After installing, restart NVDA and open Preferences → Speech to select the new variant from the Voice dropdown.
-
-> If the install fails with a permission error, re-run Voice Lab as Administrator.
+- [ ] Confirm audio playback works (synthesize_and_play may be silent — needs testing)
+- [ ] Test tab order and NVDA announcements for all controls
+- [ ] Test the close/save-progress dialog with keyboard
+- [ ] Test Install to NVDA and the UAC elevation path
+- [ ] Decide whether "current setting" labels in list boxes should reflect the actual loaded values dynamically
