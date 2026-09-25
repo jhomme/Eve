@@ -303,7 +303,8 @@ def read_nvda_config():
     return synth, voice, variant
 
 
-def synthesize_and_play(variant: Variant, voice: str, phrase: str = TEST_PHRASE):
+def synthesize_and_play(variant: Variant, voice: str, phrase: str = TEST_PHRASE,
+                        cancel_event: threading.Event | None = None):
     variant.save()
     voice_arg = f"{voice}+{VARIANT_NAME}" if voice else VARIANT_NAME
     cmd = [
@@ -312,32 +313,16 @@ def synthesize_and_play(variant: Variant, voice: str, phrase: str = TEST_PHRASE)
         "-v", voice_arg,
         phrase,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return f"Synthesis error: {result.stderr.strip()}"
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    while proc.poll() is None:
+        if cancel_event and cancel_event.is_set():
+            proc.kill()
+            proc.wait()
+            return None
+    if proc.returncode not in (0, -9):
+        return f"Synthesis error: {proc.stderr.read().decode(errors='replace').strip()}"
     return None
 
-
-class _SaveVoiceDialog(wx.Dialog):
-    def __init__(self, parent, default_name=""):
-        super().__init__(parent, title="Save As New Voice")
-        panel = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-
-        lbl = wx.StaticText(panel, label="Voice name:")
-        self.name_ctrl = wx.TextCtrl(panel, value=default_name)
-        sizer.Add(lbl, 0, wx.ALL, 5)
-        sizer.Add(self.name_ctrl, 0, wx.EXPAND | wx.ALL, 5)
-
-        btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
-        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 5)
-
-        panel.SetSizer(sizer)
-        sizer.Fit(self)
-        self.name_ctrl.SetFocus()
-
-    def get_name(self):
-        return self.name_ctrl.GetValue().strip()
 
 
 class _InstallDialog(wx.Dialog):
@@ -383,7 +368,6 @@ class VoiceLabFrame(wx.Frame):
         self._phrase_ctrl.SetFocus()
         if not defer_init:
             self._preselect_all()
-            self._fire_synthesis()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -426,12 +410,14 @@ class VoiceLabFrame(wx.Frame):
         # Action buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         save_btn = wx.Button(panel, label="Save As &New Voice")
+        open_btn = wx.Button(panel, label="&Open Voice")
         install_btn = wx.Button(panel, label="&Install to NVDA")
         quit_btn = wx.Button(panel, label="&Quit")
         save_btn.Bind(wx.EVT_BUTTON, self._on_save)
+        open_btn.Bind(wx.EVT_BUTTON, self._on_open)
         install_btn.Bind(wx.EVT_BUTTON, self._on_install)
         quit_btn.Bind(wx.EVT_BUTTON, self._on_quit)
-        for b in (save_btn, install_btn, quit_btn):
+        for b in (save_btn, open_btn, install_btn, quit_btn):
             btn_sizer.Add(b, 0, wx.ALL, 6)
         outer.Add(btn_sizer, 0, wx.ALL, 4)
 
@@ -485,7 +471,7 @@ class VoiceLabFrame(wx.Frame):
         voice = self._voice
 
         def run():
-            err = synthesize_and_play(variant, voice, phrase)
+            err = synthesize_and_play(variant, voice, phrase, cancel)
             if not cancel.is_set():
                 wx.CallAfter(self._on_synthesis_done, err)
 
@@ -503,23 +489,48 @@ class VoiceLabFrame(wx.Frame):
     # ------------------------------------------------------------------
 
     def _on_save(self, evt):
-        dlg = _SaveVoiceDialog(self, default_name=self._saved_file)
+        default = self._saved_file if self._saved_file else ""
+        dlg = wx.FileDialog(
+            self, message="Save voice as",
+            defaultDir=str(VARIANTS_DIR),
+            defaultFile=default,
+            wildcard="All files (*.*)|*.*",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        )
         if dlg.ShowModal() != wx.ID_OK:
             dlg.Destroy()
             return
-        name = dlg.get_name()
+        dest = Path(dlg.GetPath())
         dlg.Destroy()
-        if not name:
-            return
-        dest = VARIANTS_DIR / name
-        self._variant.set_line("name", f"name {name}")
+        self._variant.set_line("name", f"name {dest.name}")
         self._variant.save()
         try:
             shutil.copy2(self._variant.path, dest)
-            self._saved_file = name
-            self.SetStatusText(f"Saved as '{name}'.")
+            self._saved_file = dest.name
+            self.SetStatusText(f"Saved as '{dest.name}'.")
         except Exception as e:
             wx.MessageDialog(self, str(e), "Save failed", wx.OK | wx.ICON_ERROR).ShowModal()
+
+    def _on_open(self, evt):
+        dlg = wx.FileDialog(
+            self, message="Open voice file",
+            defaultDir=str(VARIANTS_DIR),
+            wildcard="All files (*.*)|*.*",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+        )
+        if dlg.ShowModal() != wx.ID_OK:
+            dlg.Destroy()
+            return
+        path = Path(dlg.GetPath())
+        dlg.Destroy()
+        try:
+            shutil.copy2(path, self._variant.path)
+            self._variant.reload()
+            self._preselect_all()
+            self.SetStatusText(f"Opened '{path.name}'.")
+            self._fire_synthesis()
+        except Exception as e:
+            wx.MessageDialog(self, str(e), "Open failed", wx.OK | wx.ICON_ERROR).ShowModal()
 
     def _on_install(self, evt):
         dlg = _InstallDialog(self, default_display=self._saved_display, default_file=self._saved_file)
