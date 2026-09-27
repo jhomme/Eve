@@ -12,6 +12,8 @@ from pathlib import Path
 
 import wx
 
+__version__ = "0.1.0"
+
 ESPEAK_EXE = Path(r"C:\Program Files\eSpeak NG\espeak-ng.exe")
 DATA_DIR = Path(__file__).parent / "espeak-ng-data"
 VARIANTS_DIR = DATA_DIR / "voices" / "!v"

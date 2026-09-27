@@ -1,22 +1,77 @@
-# Voice Lab
+# Eve
 
-A Windows CLI tool for tuning eSpeak NG voice variant files and previewing changes through NVDA in real time.
+Eve is a Windows tool for tuning eSpeak NG voice settings and hearing the results instantly through NVDA. You adjust parameters like pitch, breathiness, and roughness, and Eve plays the new voice immediately so you can decide whether you like it. When you find a voice you want to keep, Eve saves it and can install it directly into NVDA.
 
-## Requirements
+Eve is Windows-only. It requires NVDA and eSpeak NG.
 
-- Python 3.x
-- eSpeak NG installed at `C:\Program Files\eSpeak NG\espeak-ng.exe`
-- NVDA running and configured to use the eSpeak NG synthesizer
+---
 
-## Usage
+## What you need before installing
+
+- Windows 10 or 11
+- NVDA, with eSpeak NG set as your synthesizer in NVDA's Voice Settings
+- eSpeak NG installed at its default location. Download the `.msi` installer for Windows from the [eSpeak NG releases page](https://github.com/espeak-ng/espeak-ng/releases) and run it, accepting the default install location.
+- Python 3.11 or later. Download it from [python.org](https://www.python.org/downloads/). During install, check the box that says **Add Python to PATH**.
+
+---
+
+## How to install
+
+Do these steps once, the first time you set up Eve.
+
+1. Open Command Prompt. Press the Windows key, type `cmd`, and press Enter.
+
+2. Go to the Eve folder. Type the command below, replacing the path with wherever you put the Eve folder on your computer:
+
+   ```
+   cd C:\path\to\Eve
+   ```
+
+3. Create a virtual environment. This is a private copy of Python used only by Eve, so it does not affect anything else on your computer:
+
+   ```
+   python -m venv .venv
+   ```
+
+4. Install the required library:
+
+   ```
+   .venv\Scripts\pip install -r requirements.txt
+   ```
+
+5. Run Eve:
+
+   ```
+   .venv\Scripts\python voice_lab.py
+   ```
+
+---
+
+## How to run Eve after the first install
+
+Open Command Prompt, go to the Eve folder, and run:
 
 ```
-python voice_lab.py
+.venv\Scripts\python voice_lab.py
 ```
 
-Voice Lab reads your active eSpeak voice from NVDA's config, presents a menu of tunable parameters (pitch, rate, breathiness, etc.), and plays each change immediately so you can hear the result before committing it.
+---
 
-See [docs/voice-lab.md](docs/voice-lab.md) for the full workflow.
+## Feedback and bug reports
+
+If something does not work, or you have a suggestion, please open an issue on GitHub.
+
+Go to the [Eve issues page](https://github.com/jhomme/Eve/issues) and click **New issue**. Give it a short title describing the problem, then describe what happened and what you expected to happen. Click **Submit new issue** when you are done.
+
+If you have never filed a GitHub issue before, GitHub has a short guide: [Creating an issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/creating-an-issue).
+
+---
+
+## Credits
+
+The code was written by Claude (Anthropic's AI) and tested by Jim Homme.
+
+---
 
 ## License
 
