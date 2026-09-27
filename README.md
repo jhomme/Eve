@@ -19,27 +19,29 @@ Eve is Windows-only. It requires NVDA and eSpeak NG.
 
 Do these steps once, the first time you set up Eve.
 
-1. Open Command Prompt. Press the Windows key, type `cmd`, and press Enter.
+1. Download Eve. Go to the [Eve releases page](https://github.com/jhomme/Eve/releases) and click the **Source code (zip)** link under the latest release. Save the zip file somewhere you can find it, then unzip it. You will get a folder called `Eve-0.1.0` or similar. You can move that folder wherever you like.
 
-2. Go to the Eve folder. Type the command below, replacing the path with wherever you put the Eve folder on your computer:
+2. Open Command Prompt. Press the Windows key, type `cmd`, and press Enter.
+
+3. Go to the Eve folder. Type the command below, replacing the path with wherever you put the Eve folder on your computer:
 
    ```
    cd C:\path\to\Eve
    ```
 
-3. Create a virtual environment. This is a private copy of Python used only by Eve, so it does not affect anything else on your computer:
+4. Create a virtual environment. This is a private copy of Python used only by Eve, so it does not affect anything else on your computer:
 
    ```
    python -m venv .venv
    ```
 
-4. Install the required library:
+5. Install the required library:
 
    ```
    .venv\Scripts\pip install -r requirements.txt
    ```
 
-5. Run Eve:
+6. Run Eve:
 
    ```
    .venv\Scripts\python voice_lab.py
