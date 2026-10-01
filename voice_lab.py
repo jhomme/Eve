@@ -233,6 +233,20 @@ MAIN_MENU_ORDER = [
 _current_voice = "en-us"
 
 
+class _NamedAccessible(wx.Accessible):
+    def __init__(self, name: str, items: list[str]):
+        super().__init__()
+        self._name = name
+        self._items = items
+
+    def GetName(self, child_id):
+        if child_id == 0:
+            return wx.ACC_OK, self._name
+        if 1 <= child_id <= len(self._items):
+            return wx.ACC_OK, f"{self._name}: {self._items[child_id - 1]}"
+        return wx.ACC_NOT_IMPLEMENTED, ""
+
+
 class Variant:
     def __init__(self, path: Path):
         self.path = path
@@ -405,6 +419,7 @@ class VoiceLabFrame(wx.Frame):
 
             items = [desc if desc else full_line for full_line, desc in SUBMENUS[key]]
             lb = wx.ListBox(panel, choices=items, style=wx.LB_SINGLE)
+            lb.SetAccessible(_NamedAccessible(param["label"], items))
             lb.Bind(wx.EVT_LISTBOX, self._make_listbox_handler(key))
             self._listboxes[key] = lb
             outer.Add(lb, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
