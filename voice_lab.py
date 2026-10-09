@@ -243,7 +243,7 @@ class _NamedAccessible(wx.Accessible):
         if child_id == 0:
             return wx.ACC_OK, self._name
         if 1 <= child_id <= len(self._items):
-            return wx.ACC_OK, f"{self._name}: {self._items[child_id - 1]}"
+            return wx.ACC_OK, self._items[child_id - 1]
         return wx.ACC_NOT_IMPLEMENTED, ""
 
 
